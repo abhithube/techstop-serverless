@@ -1,4 +1,5 @@
 import { DomainName, HttpApi } from '@aws-cdk/aws-apigatewayv2-alpha';
+import { HttpUserPoolAuthorizer } from '@aws-cdk/aws-apigatewayv2-authorizers-alpha';
 import { App, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import { DnsValidatedCertificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { Distribution } from 'aws-cdk-lib/aws-cloudfront';
@@ -14,6 +15,13 @@ import {
   UserPoolEmail,
   UserPoolIdentityProviderGoogle,
 } from 'aws-cdk-lib/aws-cognito';
+import {
+  AttributeType,
+  BillingMode,
+  StreamViewType,
+  Table,
+} from 'aws-cdk-lib/aws-dynamodb';
+import { BundlingOptions, SourceMapMode } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { ARecord, HostedZone, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import {
   CloudFrontTarget,
@@ -165,11 +173,41 @@ export class TechStopStack extends Stack {
       certificate: backendCertificate,
     });
 
+    const dynamoTable = new Table(this, 'Table', {
+      tableName: 'TechStop',
+      partitionKey: {
+        name: 'PK',
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
+      stream: StreamViewType.NEW_IMAGE,
+    });
+
+    dynamoTable.addGlobalSecondaryIndex({
+      indexName: 'GSI1',
+      partitionKey: {
+        name: 'GSI1PK',
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'GSI1SK',
+        type: AttributeType.STRING,
+      },
+    });
+
     const httpApi = new HttpApi(this, 'HttpApi', {
       apiName: 'TechStopHttpApi',
       defaultDomainMapping: {
         domainName: backendDomainName,
       },
+      defaultAuthorizer: new HttpUserPoolAuthorizer(
+        'TechStopHttpUserPoolAuthorizer',
+        userPool,
+        {
+          userPoolClients: [client],
+        }
+      ),
     });
 
     new ARecord(this, 'BackendDomain', {
@@ -186,9 +224,22 @@ export class TechStopStack extends Stack {
     new CustomersApi(this, 'CustomersApi', {
       httpApi,
       userPool,
+      dynamoTable,
     });
   }
 }
+
+export const bundling: BundlingOptions = {
+  externalModules: ['aws-sdk'],
+  minify: true,
+  sourceMap: true,
+  sourceMapMode: SourceMapMode.INLINE,
+};
+
+export const environment = {
+  DYNAMO_TABLE_NAME: process.env.DYNAMO_TABLE_NAME!,
+  DYNAMO_REGION: process.env.DYNAMO_REGION!,
+};
 
 const app = new App();
 
