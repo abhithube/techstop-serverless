@@ -1,17 +1,27 @@
+import { CustomerDto, CustomerModel } from '@lib/models';
 import { APIGatewayProxyHandler } from 'aws-lambda';
-import { Customer } from '../common/models';
-import { connectToDb, toObjectId } from '../common/utils';
+import { DynamoDB } from 'aws-sdk';
+
+console.log('Loading function');
+
+const dynamo = new DynamoDB.DocumentClient();
 
 export const handler: APIGatewayProxyHandler = async (event) => {
-  const id = event.pathParameters!.id!;
+  const username = event.pathParameters!.username!;
 
-  const db = await connectToDb();
+  const result = await dynamo
+    .query({
+      TableName: process.env.DYNAMO_TABLE_NAME!,
+      IndexName: 'GSI1',
+      KeyConditionExpression: `GSI1PK = :pk AND GSI1SK = :sk`,
+      ExpressionAttributeValues: {
+        ':pk': `CUSTOMER#${username}`,
+        ':sk': 'CUSTOMER',
+      },
+    })
+    .promise();
 
-  const document = await db.collection('customers').findOne({
-    _id: toObjectId(id),
-  });
-
-  if (!document) {
+  if (!result.Items || result.Items.length === 0) {
     return {
       statusCode: 404,
       body: JSON.stringify({
@@ -20,13 +30,14 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     };
   }
 
-  const customer: Customer = {
-    id: document._id.toString(),
-    username: document.username,
-    email: document.email,
-    addresses: document.addresses,
-    createdAt: document.createdAt,
-    updatedAt: document.updatedAt,
+  const { CustomerId, Username, DisplayName, Email } = result
+    .Items[0] as CustomerModel;
+
+  const customer: CustomerDto = {
+    id: CustomerId,
+    username: Username,
+    displayName: DisplayName,
+    email: Email,
   };
 
   return {

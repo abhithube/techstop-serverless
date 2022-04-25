@@ -1,32 +1,32 @@
-import { HttpApi, HttpMethod } from '@aws-cdk/aws-apigatewayv2-alpha';
+import {
+  HttpApi,
+  HttpMethod,
+  HttpNoneAuthorizer,
+} from '@aws-cdk/aws-apigatewayv2-alpha';
 import { HttpLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha';
 import { StackProps } from 'aws-cdk-lib';
 import { UserPool, UserPoolOperation } from 'aws-cdk-lib/aws-cognito';
+import { Table } from 'aws-cdk-lib/aws-dynamodb';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Construct } from 'constructs';
 import path from 'path';
+import { bundling, environment } from '../..';
 
 interface CustomersApiProps extends StackProps {
   readonly userPool: UserPool;
   readonly httpApi: HttpApi;
+  readonly dynamoTable: Table;
 }
 
 export class CustomersApi extends Construct {
   constructor(scope: Construct, id: string, props: CustomersApiProps) {
     super(scope, id);
 
-    const environment = {
-      DATABASE_URL: process.env.DATABASE_URL!,
-    };
-
     const createCustomerFunction = new NodejsFunction(
       this,
       'CreateCustomerFunction',
       {
-        bundling: {
-          externalModules: ['aws-sdk'],
-          minify: true,
-        },
+        bundling,
         entry: path.join(__dirname, './createCustomer.ts'),
         environment,
       }
@@ -37,26 +37,28 @@ export class CustomersApi extends Construct {
       createCustomerFunction
     );
 
+    props.dynamoTable.grantReadWriteData(createCustomerFunction);
+
     const getCustomerFunction = new NodejsFunction(
       this,
       'GetCustomerFunction',
       {
-        bundling: {
-          externalModules: ['aws-sdk'],
-          minify: true,
-        },
+        bundling,
         entry: path.join(__dirname, './getCustomer.ts'),
         environment,
       }
     );
 
     props.httpApi.addRoutes({
-      path: '/customers/{id}',
+      path: '/customers/{username}',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration(
         'GetCustomerLambdaIntegration',
         getCustomerFunction
       ),
+      authorizer: new HttpNoneAuthorizer(),
     });
+
+    props.dynamoTable.grantReadWriteData(getCustomerFunction);
   }
 }
